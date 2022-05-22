@@ -156,7 +156,7 @@ cap_sys_admin,22,25          jrsysadmin
 
 相关代码在`Linux/Kernel/capabilities`中，
 
-内核提供给`userspace`的设置`caps`的系统调用`capset`、`capset`用于修改、获取进程的`caps`
+内核提供给`userspace`的设置`caps`的系统调用`capset`、`capget`用于修改、获取进程的`caps`
 
 #### 系统调用原型
 
@@ -415,6 +415,7 @@ uid=0(root) gid=1000(tree) groups=1000(tree),4(adm),24(cdrom),27(sudo),30(dip),4
 
 
 
+
 ### 参考
 
 [man-capabilities](http://man7.org/linux/man-pages/man7/capabilities.7.html)
@@ -432,4 +433,6 @@ uid=0(root) gid=1000(tree) groups=1000(tree),4(adm),24(cdrom),27(sudo),30(dip),4
 [capability.conf](http://manpages.ubuntu.com/manpages/bionic/man5/capability.conf.5.html)
 
 [privilege_escalation_by_capabilities](https://github.com/carlospolop/hacktricks/blob/master/linux-unix/privilege-escalation/linux-capabilities.md)
+
+[GSSecurity-False Boundaries and Arbitrary Code Execution](https://forums.grsecurity.net/viewtopic.php?f=7&t=2522)
 
