@@ -2,7 +2,11 @@
 
 #### 前言
 
-​		[Part1]()部分主要介绍了namespace的各种类型，以及在userspace使用namespace能够达到的对各种资源的隔离，在[Part2]()部分从kernel space的角度剖析namespace的实现机制，并剖析了**user namespace**的相关细节，在这篇里将主要介绍**pid namespace**的实现细节。
+​		[Part1](./Linux_namespaces_part_1.md)部分主要介绍了namespace的各种类型，以及在userspace使用namespace能够达到的对各种资源的隔离，在[Part2](./Linux_namespaces_part_2.md)部分从kernel space的角度剖析namespace的实现机制，并剖析了**user namespace**的相关细节，在这篇里将主要介绍**pid namespace**的实现细节。
+
+
+PID namespace隔离Process ID空间，意味着在不同的PID namespaces下允许存在相同的PID。
+在容器中，PID namespaces可以实现挂起/恢复容器中的一组进程、并将容器迁移到另一个host中而容器内的进程保持原PIDs。
 
 #### 相关基础数据结构
 
@@ -333,3 +337,6 @@ if (likely(p->pid)) {
 
 ![](images\namespace_pid.png)
 
+
+### Refer
+[man-pid-namespace](https://man7.org/linux/man-pages/man7/pid_namespaces.7.html)

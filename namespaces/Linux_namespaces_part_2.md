@@ -2,7 +2,8 @@
 
 #### 前言
 
-​		[Part1]()部分主要介绍了namespace的各种类型，以及在userspace使用namespace能够达到的对各种资源的隔离，接下来的部分将从kernel space的角度剖析namespace的实现机制。这篇主要介绍**User namespace**的实现细节。
+​		[Part1](./Linux_namespaces_part_1.md)部分主要介绍了namespace的各种类型，以及在userspace使用namespace能够达到的对各种资源的隔离，接下来的部分将从kernel space的角度剖析namespace的实现机制。这篇主要介绍**User namespace**的实现细节。
+
 
 #### nsproxy
 
@@ -512,7 +513,18 @@ struct user_namespace init_user_ns = {
 
 ##### /proc/pid/uid_map
 
-/proc/pid/uid_map文件的相关操作函数定义在`seq->operation`结构下
+`uid_map`文件定义了`pid`进程所属namespace和open该文件的进程所属namespace的`User ID`的mapping关系。
+
+基本的内容格式
+```
+Start-In	Start-Ou	Length
+        0          0 	4294967295
+```
+表示前两个字段分别表示在两个namespace下映射关系的起始`User ID`，最后一个字段表示这一关系的映射长度。
+例如`100	100		2`表示在两个namespace下`100-100`,`101-101`相互映射。
+
+
+`/proc/pid/uid_map`文件的相关操作函数定义在`seq->operation`结构下
 
 ```c
 const struct seq_operations proc_uid_seq_operations = {
@@ -599,7 +611,8 @@ static inline struct user_namespace *seq_user_ns(struct seq_file *seq)
 
 其中`lower_ns`是根据`open`的`seq_file`文件获取的访问该文件的进程`user namespace`；
 
-`ns`是当pid进程的`user namespace`，`extent`是pid进程user namespace下的`uid_gid_extent`。
+`ns`是`open(/proc/pid/uid_map)`进程的`user namespace`，`extent`是被open的pid进程user namespace下的`uid_gid_extent`。
+当`opener`和`opened`属于同一个namespace时，`lower_ns = lower_ns->parent`获取父namespace，在`open(/proc/self/uid_map)`时就是这种情况。
 
 因此，（在不同usernamespace下）不同的进程读取同一个/proc/pid/uid_map获取的内容可能会不同。
 
