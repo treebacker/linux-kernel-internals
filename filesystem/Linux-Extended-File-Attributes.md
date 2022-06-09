@@ -57,7 +57,7 @@ $
 
 #### Abusing extended attrbitue
 
-文件的扩展属性，由于常见的命令：`cat`、`stat`、`ls`等无法展示其内容，是一个可用于隐藏数据的地方。
+文件的扩展属性，由于常见的命令：`cat`、`stat`、`ls`等无法展示其内容，是一个可用于隐藏数据的地方，也可以作为一种本地多进程通信的隐蔽通道。
 以下是一个将payload隐藏在`attribute`中，并取出执行的case：
 ```
 #include <stdio.h>
