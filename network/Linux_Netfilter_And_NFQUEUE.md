@@ -287,4 +287,20 @@ int ip_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 简单总结转发数据流程：`PREROUTING`链->路由选择（不是本机）->`FORWARD`链->`POSTROUTING`链
 
 ### NFQUEUE / iptables-queue
+NetfilterQueue是内核基于Netfilter框架，提供给用户程序一个管理所有数据包的接口。
+通过iptables规则，将命中规则的数据包加入到`NFQUEUE`队列中由用户态程序处理（并决定是否`ACCEPT`、`DROP`、`REJECT`...）
+
+#### 使用
+简单的一条使用`nfquque`的iptables规则
+```s
+iptables -I PREROUTING -t raw -p tcp -j NFQUEUE --queue-num 1 --queue-bypass
+```
+* `queue-num`：指定`NFQUEUE`队列序号
+* `queue-bypass`：在没有用户程序监听（绑定）当前队列时，默认放行网络包，否则丢包
+
+#### 坑点
+`NFQUEUE`既然是一个队列，那就是有容量限制的，默认是`1024`，用户程序可以在监听队列的时候设置容量大小，如果队列满了，`iptables`默认会丢包，在内核`3.6`之后，可以使用`--fail-open`选项设为默认放行。
+这里的坑点在于，很多主机上流量安全审计产品/工具，如果在用户态消费`NFQUEUE`队列比较慢，会产生较高的网络延迟，甚至导致`socket buffer`不足，打挂网络。 
+另外如果没有设置`--fail-open`参数，在队列满了的情况下，会产生丢包，网络直接被打挂。
+最坑的时较上层的应用程序，libnfqueue提供了设置`queue` flags的接口，可以设置`--fail-open`参数，但是部分Linux发行版`iptables`居然没提供该选项（据我所知Centos没有提供、ubuntu提供了）！
 
