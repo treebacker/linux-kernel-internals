@@ -55,6 +55,7 @@ Linux下Netfilter通过在内核协议栈的各个重要节点埋下钩子，将
 * 数据包的改写：`SNAT`、`DNAT`
 * 信息记录: `LOG`
 
+#### 数据包接收过程
 Linux的网络包所有IP层的入口函数是`ip_rcv`，在这里会命中第一个HOOK, 即`PREROUTING`
 ```c
     // net/ipv4/ip_input.c
@@ -168,7 +169,122 @@ static int ip_rcv_finish_core(struct net *net, struct sock *sk,
     ...
 }
 ```
+在路由选择时，如果发现是本地设备接收，交由`ip_local_deliver`处理
+```c
+		rt->dst.output = ip_output;
+		if (flags & RTCF_LOCAL)
+			rt->dst.input = ip_local_deliver;
+	}
+```
+在`ip_local_deliver`中执行`LOCAL_IN`钩子，也就是`INPUT`链
+```c
+int ip_local_deliver(struct sk_buff *skb)
+{
+	/*
+	 *	Reassemble IP fragments.
+	 */
+	struct net *net = dev_net(skb->dev);
+    ...
+	return NF_HOOK(NFPROTO_IPV4, NF_INET_LOCAL_IN,
+		       net, NULL, skb, skb->dev, NULL,
+		       ip_local_deliver_finish);
+}
+```
+简单总结上述数据包接收过程路径：`PREROUTING`链->路由选择（本机）->`INPUT`链
 
-在路由选择时，如果发现是本地设备接收，交由
+#### 数据包发送过程
+在Linux内核实现中，网络层发送的入口函数是`ip_queue_xmit`
+```c
+int __ip_queue_xmit(struct sock *sk, struct sk_buff *skb, struct floi *fl,
+		    __u8 tos)
+{
+    // 判断pkt是否已经路由
+    rt = skb_rtable(skb);
+	if (rt)
+		goto packet_routed;
+
+    // 查找路由缓存
+	/* Make sure we can route this packet. */
+	rt = (struct rtable *)__sk_dst_check(sk, 0);
+	if (!rt) {
+		__be32 daddr;
+
+        // 没有缓存信息，查找路由项
+		rt = ip_route_output_ports(...);
+		if (IS_ERR(rt))
+			goto no_route;
+		sk_setup_caps(sk, &rt->dst);
+	}
+	skb_dst_set_noref(skb, &rt->dst);
+    ...
+    // 发送
+    res = ip_local_out(net, sk, skb);
+}
+```
+进入`ip_local_out`发送时函数，在这里执行`NF_INET_LOCAL_OUT`钩子，也就是`OUTPUT`链
+```c
+int __ip_local_out(struct net *net, struct sock *sk, struct sk_buff *skb)
+{
+	struct iphdr *iph = ip_hdr(skb);
+
+	iph->tot_len = htons(skb->len);
+	ip_send_check(iph);
+
+    ...
+	skb->protocol = htons(ETH_P_IP);
+
+	return nf_hook(NFPROTO_IPV4, NF_INET_LOCAL_OUT,
+		       net, sk, skb, NULL, skb_dst(skb)->dev,
+		       dst_output);
+}
+```
+执行完`OUTPUT`链上的规则之后，进入`dst_output`，最终调用`ip_output`发送
+```c
+int ip_output(struct net *net, struct sock *sk, struct sk_buff *skb)
+{
+	struct net_device *dev = skb_dst(skb)->dev, *indev = skb->dev;
+
+	IP_UPD_PO_STATS(net, IPSTATS_MIB_OUT, skb->len);
+
+	skb->dev = dev;
+	skb->protocol = htons(ETH_P_IP);
+
+	return NF_HOOK_COND(NFPROTO_IPV4, NF_INET_POST_ROUTING,
+			    net, sk, skb, indev, dev,
+			    ip_finish_output,
+			    !(IPCB(skb)->flags & IPSKB_REROUTED));
+}
+```
+在这里执行了`NF_INET_POST_ROUTING`钩子，就是`POSTROUTING`链
+
+简单总结发送数据包的流程：路由选择->`OUTPUT`链->`POSTROUTING`链
+
+
+
+#### 数据包转发过程
+数据转发过程和接受过程在`PREROUTING`是一样的，在最终进入`dst_input`后有了区分，转发数据最终由`ip_forward`处理
+```c
+int ip_forward(struct sk_buff *skb)
+{
+    ...
+    return NF_HOOK(NFPROTO_IPV4, NF_INET_FORWARD,
+            net, NULL, skb, skb->dev, rt->dst.dev,
+            ip_forward_finish);
+}
+```
+在这里执行了`NF_INET_FORWARD`钩子，就是`FORWARD`链
+然后执行`ip_forward_finish`，进而进入`dst_output`->`ip_output`，执行`NF_INET_POST_ROUTING`钩子，就是`POSTROUTING`链
+```c
+int ip_output(struct net *net, struct sock *sk, struct sk_buff *skb)
+{
+    ...
+	return NF_HOOK_COND(NFPROTO_IPV4, NF_INET_POST_ROUTING,
+			    net, sk, skb, indev, dev,
+			    ip_finish_output,
+			    !(IPCB(skb)->flags & IPSKB_REROUTED));
+}
+```
+简单总结转发数据流程：`PREROUTING`链->路由选择（不是本机）->`FORWARD`链->`POSTROUTING`链
+
 ### NFQUEUE / iptables-queue
 
