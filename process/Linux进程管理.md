@@ -10,7 +10,7 @@ Linux内核调度的对象是线程而不是进程，换言之真正被执行的
 Linux对于线程的实现，事实上没有区分进程或线程（没有单独的线程的特殊实现），在Linux上的一个线程就是一个单线程的进程。
 
 #### Process Group
-进程组是一个或多个相关进程的集合，同一个进程组的所有进程共享一个process group identifier(PGID)
+进程组是一个或多个相关进程的集合，同一个进程组的所有进程共享一个process group identifier(PGID).
 进程可以通过调用`setpgid`加入某个进程组。
 
 #### Sessions
@@ -21,10 +21,10 @@ linux内核简单的将这些进程归为`session`，`setsid`系统调用创建�
 该terminal也成为该session的控制终端，一个terminal在一个时间里只能作为一个session的控制终端。
 
 #### Job Control
-    `Job Control`是一种能够选择性的结束（挂起）部分进程、在之后继续执行的能力。
-    
-    对于shell终端，每一个单独的进程都是一个job， 由管道符连接的多个进程属于同一个job。
-    使得shell用户可以执行多个命令，一个在前端交互，其余在后端运行。
+`Job Control`是一种能够选择性的结束（挂起）部分进程、在之后继续执行的能力。
+
+对于shell终端，每一个单独的进程都是一个job， 由管道符连接的多个进程属于同一个job。
+使得shell用户可以执行多个命令，一个在前端交互，其余在后端运行。
 
 #### 结构体信息
-    内核中最重要的结构体，进程结构体就是`task_struct`。
+内核中最重要的结构体，进程结构体就是`task_struct`。
