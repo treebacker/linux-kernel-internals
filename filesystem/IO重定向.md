@@ -191,7 +191,7 @@ Ebusy:
 }
 ```
 主要工作和`sys_dup`是相同的，就是修改`fdt->fd[newfd]`指向oldfd的`struct file`结构；
-但是由于`newfd`是指定的已经存在的`fd`，所以有一定的概率此时`newfd`文件还是在`open`状态，如果直接修改，导致仍然对原`newfd`文件的操作发生非预期的情况，所以多了一步`fd_is_open`的校验。
+但是由于`newfd`是指定的已经存在的`fd`，所以有一定的概率此时`newfd`文件描述符的操作还没有完成，如果直接修改，导致仍然对原`newfd`文件的操作发生非预期的情况，所以多了一步`fd_is_open`的校验。
 
 sys_dup3实际上和sys_dup2差别不大，最终也是由ksys_dup3->do_dup2完成。
 
