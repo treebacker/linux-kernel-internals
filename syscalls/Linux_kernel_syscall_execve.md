@@ -123,23 +123,60 @@ static struct linux_binfmt elf_format = {
 ```
 
 
+#### execve/fexecve/execveat区别
+```c
+       int execve(const char *pathname, char *const _Nullable argv[],
+                  char *const _Nullable envp[]);
 
+		int fexecve(int fd, char *const argv[], char *const envp[]);
 
-
-
-
-#### any format
-
-结构
-
+       int execveat(int dirfd, const char *pathname,
+                    char *const _Nullable argv[],
+                    char *const _Nullable envp[],
+                    int flags);
 ```
-0-0x4 [MAGIC_NUMBER]: EANY
-0x5	[Class]		    : 0x1(32)  0x2(64)
-0x5-0x10			: reserved
-0x10-xxx 		    : raw shellcode
+1、execve和execveat是linux内核提供的系统调用，fexecve是glibc提供的库函数
+2、execve执行指定的绝对路径的文件，execveat根据目录`dirfd`和文件名`pathname`执行文件
+3、fexecve是根据文件`fd`执行文件，目的是允许在执行前校验要执行的文件没有被篡改过。
 
+fexecve底层实现还是依赖execveat的
+```c
+int
+fexecve (int fd, char *const argv[], char *const envp[])
+{
+  if (fd < 0 || argv == NULL || envp == NULL)
+    {
+      __set_errno (EINVAL);
+      return -1;
+    }
+#ifdef __NR_execveat
+  /* Avoid implicit array coercion in syscall macros.  */
+  INLINE_SYSCALL (execveat, 5, fd, "", &argv[0], &envp[0], AT_EMPTY_PATH);
+# ifndef __ASSUME_EXECVEAT
+  if (errno != ENOSYS)
+    return -1;
+# endif
+#endif
+#ifndef __ASSUME_EXECVEAT
+  /* We use the /proc filesystem to get the information.  If it is not
+     mounted we fail.  We do not need the return value.  */
+  struct fd_to_filename filename;
+  __execve (__fd_to_filename (fd, &filename), argv, envp);
+  int save = errno;
+  /* We come here only if the 'execve' call fails.  Determine whether
+     /proc is mounted.  If not we return ENOSYS.  */
+  struct __stat64_t64 st;
+  if (__stat64_time64 ("/proc/self/fd", &st) != 0 && errno == ENOENT)
+    save = ENOSYS;
+  __set_errno (save);
+#endif
+  return -1;
+}
 ```
+一种是`execveat`支持的`AT_EMPTY_PATH`，另一种是通过`__fd_to_filename`根据`fd`获取进程路径执行`execve`。
 
+##### fexecve利用
+fexecve被利用的最多的对抗场景就是无文件执行，由于linux上的匿名fd的存在，fexecve完全可以执行一个非落盘的文件，最佳的组合方式就是`memfd_create+fexecve`，其实通过`memfd_create+execveat`效果也一样
 
 
 
@@ -150,5 +187,6 @@ static struct linux_binfmt elf_format = {
 
 [binfmt_aout](https://elixir.bootlin.com/linux/v5.8.18/source/fs/binfmt_aout.c#L34)
 
-(start_thread)[http://www.dosrc.com/mark/linux-3.18.6/2016/05/15/linux-kernel-loading-of-executable-program.html]
+[linux kernel loading a executable program][http://www.dosrc.com/mark/linux-3.18.6/2016/05/15/linux-kernel-loading-of-executable-program.html]
 
+[fexecve-sourcecode](https://codebrowser.dev/glibc/glibc/sysdeps/unix/sysv/linux/fexecve.c.html)
