@@ -326,6 +326,17 @@ pam_authenticate的返回值标记了此次认证是否成功。
 
 那么我的思路就是：
 uretprobe pam_get_authtok 获取用户名密码，uretprobe获取pam_authenticate返回值判断是不是认证成功（ret=0x0时）
+首先获取这两个函数在libpam文件的偏移
+```
+tree@tree-pc:~/code$ objdump -S /lib/x86_64-linux-gnu/libpam.so.0 | grep pam_authenticate
+0000000000003900 <pam_authenticate@@LIBPAM_1.0>:
+```
+tree@tree-pc:~/code$ objdump -S /lib/x86_64-linux-gnu/libpam.so.0 | grep pam_get_authtok
+    3eba:       e8 81 34 00 00          callq  7340 <pam_get_authtok_verify@@LIBPAM_EXTENSION_1.1.1+0x1950>
+    4747:       e8 a4 2a 00 00          callq  71f0 <pam_get_authtok_verify@@LIBPAM_EXTENSION_1.1.1+0x1800>
+00000000000059c0 <pam_get_authtok@@LIBPAM_EXTENSION_1.1>:
+```
+接下来就是uprobe跟踪这两个函数，获取我们想要的信息
 ```
 root@tree-pc:/home/tree/code/tracepoint/uprobe# echo 'r /lib/x86_64-linux-gnu/libpam.so.0:0x59c0 username=+u0(+u48(%di)):string password=+u0(+u0(%dx)):string' > /sys/kernel/tracing/uprobe_events 
 root@tree-pc:/home/tree/code/tracepoint/uprobe# echo 'r /lib/x86_64-linux-gnu/libpam.so.0:0x3900 ret=$retval' >> /sys/kernel/tracing/uprobe_events 
